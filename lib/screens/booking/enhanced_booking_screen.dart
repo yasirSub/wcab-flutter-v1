@@ -5,6 +5,7 @@ import 'package:geolocator/geolocator.dart';
 import 'dart:async';
 import '../../services/location_service.dart';
 import '../../services/api_service.dart';
+import '../../services/routing_service.dart';
 
 class EnhancedBookingScreen extends StatefulWidget {
   const EnhancedBookingScreen({super.key});
@@ -127,7 +128,7 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
 
       // Create route if dropoff is already set
       if (dropoffLocation != null) {
-        _createRoute();
+        await _createRoute();
       }
       await _getNearbyDrivers();
       await _estimateFare();
@@ -148,7 +149,7 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
 
       // Create route when both locations are set
       if (pickupLocation != null) {
-        _createRoute();
+        await _createRoute();
       }
 
       await _estimateFare();
@@ -334,15 +335,47 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
     );
   }
 
-  void _createRoute() {
+  Future<void> _createRoute() async {
     if (pickupLocation != null && dropoffLocation != null) {
       setState(() {
-        routePoints = [pickupLocation!, dropoffLocation!];
-        showRoute = true;
+        isLoading = true;
       });
 
-      // Fit camera to show both points with padding
-      _fitCameraToRoute();
+      try {
+        print(
+          'Creating route from ${pickupLocation!.latitude},${pickupLocation!.longitude} to ${dropoffLocation!.latitude},${dropoffLocation!.longitude}',
+        );
+
+        // Get actual road route using routing service
+        final routeCoordinates = await RoutingService.getRoute(
+          startLat: pickupLocation!.latitude,
+          startLng: pickupLocation!.longitude,
+          endLat: dropoffLocation!.latitude,
+          endLng: dropoffLocation!.longitude,
+        );
+
+        setState(() {
+          routePoints = routeCoordinates;
+          showRoute = true;
+          isLoading = false;
+        });
+
+        print('Route created with ${routePoints.length} points');
+
+        // Fit camera to show the entire route with padding
+        _fitCameraToRoute();
+      } catch (e) {
+        print('Error creating route: $e');
+
+        // Fallback to straight line
+        setState(() {
+          routePoints = [pickupLocation!, dropoffLocation!];
+          showRoute = true;
+          isLoading = false;
+        });
+
+        _fitCameraToRoute();
+      }
     }
   }
 
@@ -416,7 +449,7 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
 
         // Create route if both locations are set
         if (pickupLocation != null && dropoffLocation != null) {
-          _createRoute();
+          await _createRoute();
           await _estimateFare();
         }
 
@@ -857,16 +890,70 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
                     if (showRoute && routePoints.isNotEmpty)
                       PolylineLayer(
                         polylines: [
+                          // Background (border) line
                           Polyline(
                             points: routePoints,
-                            strokeWidth: 4.0,
-                            color: const Color(0xFF2196F3),
+                            strokeWidth: 8.0,
+                            color: Colors.black.withOpacity(0.3),
+                          ),
+                          // Main route line
+                          Polyline(
+                            points: routePoints,
+                            strokeWidth: 5.0,
+                            color: const Color(0xFF1976D2),
+                            gradientColors: [
+                              const Color(0xFF2196F3),
+                              const Color(0xFF1976D2),
+                              const Color(0xFF0D47A1),
+                            ],
                           ),
                         ],
                       ),
                     MarkerLayer(markers: _buildMarkers()),
                   ],
                 ),
+
+                // Route loading indicator
+                if (isLoading &&
+                    pickupLocation != null &&
+                    dropoffLocation != null)
+                  Positioned(
+                    top: 20,
+                    left: 20,
+                    right: 20,
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            'Finding best route...',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
 
                 // Map instructions overlay
                 if (isSelectingPickup || isSelectingDropoff)
