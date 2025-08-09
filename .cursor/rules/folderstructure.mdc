@@ -1,0 +1,21 @@
+---
+description: |
+  Maintain a clean, modular, and scalable folder structure for the project, following the example below:
+
+  D:\mywork\
+  ├── wcab/            # Flutter Mobile App
+  ├── wcab-b/          # Laravel Backend
+  ├── wcab-p/          # React Admin Panel
+  └── wcab-doc/        # Documentation
+
+  Guidelines:
+    - Group related features, screens, and components into their own folders (e.g., /screens, /widgets, /services).
+    - Separate logic, UI, and service/network code into distinct files.
+    - Use clear, descriptive, and consistent file and folder names.
+    - Each file should have a single responsibility to maximize readability and maintainability.
+    - Avoid placing excessive code in a single file; refactor into smaller units as needed.
+    - Keep documentation and guides in a dedicated documentation folder.
+
+globs:
+alwaysApply: false
+---

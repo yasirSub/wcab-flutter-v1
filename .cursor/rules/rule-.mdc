@@ -1,0 +1,8 @@
+---
+description: |
+  If any error occurs, review the error, fix it, and then provide a clear explanation of the issue and the solution applied.
+  If any major changes are made that require updates to the backend, admin panel (website), or frontend (Flutter app), ensure all related systems are updated and kept in sync. Coordinate changes across all platforms to maintain compatibility and prevent integration issues.
+  Do not update guide or readme files for every change; only update documentation when there are significant or breaking changes that affect usage or onboarding.
+globs:
+alwaysApply: false
+---
