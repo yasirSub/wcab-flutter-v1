@@ -446,7 +446,6 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
 
   // Search address and update map
 
-
   // Debounced search - waits for user to stop typing
   void _onAddressChanged(String value, bool isPickup) {
     _searchTimer?.cancel();
@@ -731,25 +730,98 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
     // Nearby drivers markers
     for (var driver in nearbyDrivers) {
       if (driver['vehicle'] != null) {
+        final vehicleType = driver['vehicle']['type']?.toString().toLowerCase() ?? 'car';
+        final driverLocation = LatLng(
+          driver['vehicle']['current_latitude'] ?? 0.0,
+          driver['vehicle']['current_longitude'] ?? 0.0,
+        );
+
         markers.add(
           Marker(
             width: 60,
-            height: 60,
-            point: LatLng(
-              driver['vehicle']['current_latitude'] ?? 0.0,
-              driver['vehicle']['current_longitude'] ?? 0.0,
-            ),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.blue,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              child: const Icon(
-                Icons.directions_car,
-                color: Colors.white,
-                size: 24,
-              ),
+            height: 70,
+            point: driverLocation,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Driver info tooltip (optional)
+                if (driver['name'] != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      driver['name'].toString().split(' ').first, // First name only
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                // Vehicle marker
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    // Pulsing effect for available drivers
+                    if (driver['is_available'] == true)
+                      Container(
+                        width: 50,
+                        height: 50,
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withOpacity(0.2),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    // Vehicle icon background
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: driver['is_available'] == true ? Colors.green : Colors.orange, 
+                          width: 3,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.3),
+                            blurRadius: 8,
+                            offset: const Offset(0, 3),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Vehicle icon
+                    Icon(
+                      _getVehicleIcon(vehicleType),
+                      color: driver['is_available'] == true ? Colors.green : Colors.orange,
+                      size: 24,
+                    ),
+                    // Driver status indicator
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: driver['is_available'] == true ? Colors.green : Colors.orange,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        child: driver['is_available'] == true 
+                          ? const Icon(Icons.check, color: Colors.white, size: 8)
+                          : const Icon(Icons.access_time, color: Colors.white, size: 8),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         );
@@ -757,6 +829,88 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
     }
 
     return markers;
+  }
+
+  // Get appropriate vehicle icon based on type
+  IconData _getVehicleIcon(String vehicleType) {
+    switch (vehicleType.toLowerCase()) {
+      case 'car':
+      case 'sedan':
+      case 'hatchback':
+        return Icons.directions_car;
+      case 'suv':
+      case 'luxury':
+        return Icons.directions_car;
+      case 'van':
+      case 'mini_van':
+        return Icons.airport_shuttle;
+      case 'truck':
+        return Icons.local_shipping;
+      case 'bike':
+      case 'motorcycle':
+        return Icons.two_wheeler;
+      case 'auto':
+      case 'rickshaw':
+        return Icons.local_taxi;
+      default:
+        return Icons.directions_car;
+    }
+  }
+
+  // Build driver range circles
+  List<CircleMarker> _buildDriverCircles() {
+    List<CircleMarker> circles = [];
+
+    for (var driver in nearbyDrivers) {
+      if (driver['vehicle'] != null && driver['is_available'] == true) {
+        final driverLocation = LatLng(
+          driver['vehicle']['current_latitude'] ?? 0.0,
+          driver['vehicle']['current_longitude'] ?? 0.0,
+        );
+
+        // Service range circle (typically 2-5 km radius)
+        final serviceRadius = driver['service_radius']?.toDouble() ?? 2500.0; // 2.5km default
+        final vehicleType = driver['vehicle']['type']?.toString().toLowerCase() ?? 'car';
+
+        // Different colors for different vehicle types
+        Color circleColor;
+        Color borderColor;
+        
+        switch (vehicleType) {
+          case 'bike':
+          case 'motorcycle':
+            circleColor = Colors.orange.withOpacity(0.08);
+            borderColor = Colors.orange.withOpacity(0.25);
+            break;
+          case 'auto':
+          case 'rickshaw':
+            circleColor = Colors.purple.withOpacity(0.08);
+            borderColor = Colors.purple.withOpacity(0.25);
+            break;
+          case 'van':
+          case 'mini_van':
+            circleColor = Colors.green.withOpacity(0.08);
+            borderColor = Colors.green.withOpacity(0.25);
+            break;
+          default: // car, sedan, suv
+            circleColor = Colors.blue.withOpacity(0.08);
+            borderColor = Colors.blue.withOpacity(0.25);
+        }
+
+        circles.add(
+          CircleMarker(
+            point: driverLocation,
+            radius: serviceRadius,
+            useRadiusInMeter: true,
+            color: circleColor,
+            borderColor: borderColor,
+            borderStrokeWidth: 1.5,
+          ),
+        );
+      }
+    }
+
+    return circles;
   }
 
   Widget _buildLocationInput({
@@ -1087,6 +1241,8 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
                           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                       userAgentPackageName: 'com.example.wcab',
                     ),
+                    // Driver range circles
+                    CircleLayer(circles: _buildDriverCircles()),
                     // Route polyline
                     if (showRoute && routePoints.isNotEmpty)
                       PolylineLayer(
