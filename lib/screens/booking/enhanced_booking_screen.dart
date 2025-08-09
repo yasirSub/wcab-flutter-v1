@@ -360,7 +360,22 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
           isLoading = false;
         });
 
-        print('Route created with ${routePoints.length} points');
+        print('🗺️ Route created with ${routePoints.length} points');
+        if (routePoints.length <= 2) {
+          print(
+            '⚠️ WARNING: Only ${routePoints.length} points - this is likely a straight line fallback!',
+          );
+          print(
+            '📍 Start: ${routePoints.first.latitude}, ${routePoints.first.longitude}',
+          );
+          print(
+            '📍 End: ${routePoints.last.latitude}, ${routePoints.last.longitude}',
+          );
+        } else {
+          print(
+            '✅ SUCCESS: Got real road route with ${routePoints.length} waypoints',
+          );
+        }
 
         // Fit camera to show the entire route with padding
         _fitCameraToRoute();

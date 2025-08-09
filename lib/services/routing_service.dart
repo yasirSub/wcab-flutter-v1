@@ -4,15 +4,15 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 class RoutingService {
-  // Using OpenRouteService (free alternative to Google Directions)
-  // You can get a free API key from https://openrouteservice.org/
-  static const String _baseUrl =
-      'https://api.openrouteservice.org/v2/directions';
+  // Using OSRM (Open Source Routing Machine) - completely free, no API key needed
+  static const String _osrmBaseUrl =
+      'https://router.project-osrm.org/route/v1/driving';
 
-  // For demo purposes, using a public demo key (limited usage)
-  // In production, get your own free API key from openrouteservice.org
-  static const String _apiKey =
-      '5b3ce3597851110001cf6248d5a1d8e1b4c1450bb5b0b3d4f9b7b8f4';
+  // Backup: OpenRouteService with your API key
+  static const String _orsBaseUrl =
+      'https://api.openrouteservice.org/v2/directions';
+  static const String _orsApiKey =
+      'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6Ijk2YjViOTVjODZiMjQ5NTI4NjA3N2ZlOTgwYWEwODMyIiwiaCI6Im11cm11cjY0In0=';
 
   /// Get driving route between two points
   static Future<List<LatLng>> getRoute({
@@ -21,48 +21,129 @@ class RoutingService {
     required double endLat,
     required double endLng,
   }) async {
+    // Try OSRM first (free, no API key needed)
     try {
-      final url = Uri.parse(
-        '$_baseUrl/driving-car?api_key=$_apiKey&start=$startLng,$startLat&end=$endLng,$endLat&format=json',
+      final osrmRoute = await _getRouteFromOSRM(
+        startLat,
+        startLng,
+        endLat,
+        endLng,
       );
-
-      print('Fetching route from: $url');
-
-      final response = await http
-          .get(
-            url,
-            headers: {
-              'Accept':
-                  'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8',
-            },
-          )
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data['routes'] != null && data['routes'].isNotEmpty) {
-          final route = data['routes'][0];
-          final geometry = route['geometry'];
-
-          if (geometry != null) {
-            // Decode the route coordinates
-            final coordinates = geometry['coordinates'] as List;
-
-            return coordinates.map<LatLng>((coord) {
-              return LatLng(coord[1].toDouble(), coord[0].toDouble());
-            }).toList();
-          }
-        }
-      } else {
-        print('Route API Error: ${response.statusCode} - ${response.body}');
+      if (osrmRoute.length > 2) {
+        print(
+          '✅ Got real road route from OSRM with ${osrmRoute.length} points',
+        );
+        return osrmRoute;
       }
     } catch (e) {
-      print('Error fetching route: $e');
+      print('OSRM failed: $e');
     }
 
-    // Fallback to straight line if route service fails
+    // Try OpenRouteService as backup
+    try {
+      final orsRoute = await _getRouteFromORS(
+        startLat,
+        startLng,
+        endLat,
+        endLng,
+      );
+      if (orsRoute.length > 2) {
+        print(
+          '✅ Got real road route from OpenRouteService with ${orsRoute.length} points',
+        );
+        return orsRoute;
+      }
+    } catch (e) {
+      print('OpenRouteService failed: $e');
+    }
+
+    print('⚠️ All routing services failed, using straight line fallback');
+    // Fallback to straight line if all services fail
     return [LatLng(startLat, startLng), LatLng(endLat, endLng)];
+  }
+
+  /// Get route from OSRM (completely free)
+  static Future<List<LatLng>> _getRouteFromOSRM(
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) async {
+    final url = Uri.parse(
+      '$_osrmBaseUrl/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson',
+    );
+
+    print('🌍 Fetching OSRM route from: $url');
+
+    final response = await http.get(url).timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      if (data['code'] == 'Ok' &&
+          data['routes'] != null &&
+          data['routes'].isNotEmpty) {
+        final route = data['routes'][0];
+        final geometry = route['geometry'];
+
+        if (geometry != null && geometry['coordinates'] != null) {
+          final coordinates = geometry['coordinates'] as List;
+
+          return coordinates.map<LatLng>((coord) {
+            return LatLng(coord[1].toDouble(), coord[0].toDouble());
+          }).toList();
+        }
+      }
+    } else {
+      print('OSRM API Error: ${response.statusCode} - ${response.body}');
+    }
+
+    return [];
+  }
+
+  /// Get route from OpenRouteService (backup)
+  static Future<List<LatLng>> _getRouteFromORS(
+    double startLat,
+    double startLng,
+    double endLat,
+    double endLng,
+  ) async {
+    final url = Uri.parse(
+      '$_orsBaseUrl/driving-car?api_key=$_orsApiKey&start=$startLng,$startLat&end=$endLng,$endLat&format=json',
+    );
+
+    print('🗺️ Fetching ORS route from: $url');
+
+    final response = await http
+        .get(
+          url,
+          headers: {
+            'Accept':
+                'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8',
+          },
+        )
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      if (data['routes'] != null && data['routes'].isNotEmpty) {
+        final route = data['routes'][0];
+        final geometry = route['geometry'];
+
+        if (geometry != null && geometry['coordinates'] != null) {
+          final coordinates = geometry['coordinates'] as List;
+
+          return coordinates.map<LatLng>((coord) {
+            return LatLng(coord[1].toDouble(), coord[0].toDouble());
+          }).toList();
+        }
+      }
+    } else {
+      print('ORS API Error: ${response.statusCode} - ${response.body}');
+    }
+
+    return [];
   }
 
   /// Get route using Google Directions API (requires API key)
@@ -161,9 +242,10 @@ class RoutingService {
     required double endLat,
     required double endLng,
   }) async {
+    // Try OSRM first
     try {
       final url = Uri.parse(
-        '$_baseUrl/driving-car?api_key=$_apiKey&start=$startLng,$startLat&end=$endLng,$endLat&format=json',
+        '$_osrmBaseUrl/$startLng,$startLat;$endLng,$endLat?overview=false',
       );
 
       final response = await http.get(url).timeout(const Duration(seconds: 10));
@@ -171,21 +253,18 @@ class RoutingService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
 
-        if (data['routes'] != null && data['routes'].isNotEmpty) {
+        if (data['code'] == 'Ok' &&
+            data['routes'] != null &&
+            data['routes'].isNotEmpty) {
           final route = data['routes'][0];
-          final summary = route['summary'];
+          final distance = route['distance'] / 1000.0; // Convert to km
+          final duration = route['duration'] / 60.0; // Convert to minutes
 
-          return {
-            'distance': (summary['distance'] / 1000)
-                .toDouble(), // Convert to km
-            'duration': (summary['duration'] / 60)
-                .toDouble(), // Convert to minutes
-            'success': true,
-          };
+          return {'distance': distance, 'duration': duration, 'success': true};
         }
       }
     } catch (e) {
-      print('Error fetching route info: $e');
+      print('Error fetching OSRM route info: $e');
     }
 
     // Fallback calculation
