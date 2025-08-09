@@ -6,6 +6,7 @@ import 'dart:async';
 import '../../services/location_service.dart';
 import '../../services/api_service.dart';
 import '../../services/routing_service.dart';
+import '../../services/geocoding_service.dart';
 
 class EnhancedBookingScreen extends StatefulWidget {
   const EnhancedBookingScreen({super.key});
@@ -44,6 +45,18 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
   Timer? _searchTimer;
   bool isSearchingAddress = false;
 
+  // Address suggestions
+  List<AddressSuggestion> pickupSuggestions = [];
+  List<AddressSuggestion> dropoffSuggestions = [];
+  bool showPickupSuggestions = false;
+  bool showDropoffSuggestions = false;
+  FocusNode pickupFocusNode = FocusNode();
+  FocusNode dropoffFocusNode = FocusNode();
+
+  // Temporary pins for address search
+  LatLng? tempPickupPin;
+  LatLng? tempDropoffPin;
+
   final List<Map<String, dynamic>> paymentMethods = [
     {'id': 'cash', 'name': 'Cash', 'icon': Icons.money},
     {'id': 'card', 'name': 'Card', 'icon': Icons.credit_card},
@@ -63,6 +76,8 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
     _notesController.dispose();
     _pickupController.dispose();
     _dropoffController.dispose();
+    pickupFocusNode.dispose();
+    dropoffFocusNode.dispose();
     super.dispose();
   }
 
@@ -430,68 +445,90 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
   }
 
   // Search address and update map
-  Future<void> _searchAddress(String address, bool isPickup) async {
-    if (address.trim().isEmpty ||
-        address == 'Getting location...' ||
-        address == 'Select destination') {
-      return;
-    }
 
-    setState(() => isSearchingAddress = true);
-
-    try {
-      final position = await LocationService.getCoordinatesFromAddress(
-        address.trim(),
-      );
-
-      if (position != null) {
-        final location = LatLng(position.latitude, position.longitude);
-
-        setState(() {
-          if (isPickup) {
-            pickupLocation = location;
-            pickupAddress = address;
-          } else {
-            dropoffLocation = location;
-            dropoffAddress = address;
-          }
-        });
-
-        // Move camera to the new location
-        if (mapController != null) {
-          mapController!.move(location, 15.0);
-        }
-
-        // Create route if both locations are set
-        if (pickupLocation != null && dropoffLocation != null) {
-          await _createRoute();
-          await _estimateFare();
-        }
-
-        // Get nearby drivers if pickup location is set
-        if (isPickup) {
-          await _getNearbyDrivers();
-        }
-      } else {
-        _showErrorSnackBar(
-          'Address not found. Please try a different address.',
-        );
-      }
-    } catch (e) {
-      _showErrorSnackBar('Error searching address: $e');
-    } finally {
-      setState(() => isSearchingAddress = false);
-    }
-  }
 
   // Debounced search - waits for user to stop typing
   void _onAddressChanged(String value, bool isPickup) {
     _searchTimer?.cancel();
-    _searchTimer = Timer(const Duration(milliseconds: 1500), () {
-      if (value.trim().length > 3) {
-        _searchAddress(value, isPickup);
+
+    if (value.trim().length < 3) {
+      setState(() {
+        if (isPickup) {
+          showPickupSuggestions = false;
+          pickupSuggestions.clear();
+        } else {
+          showDropoffSuggestions = false;
+          dropoffSuggestions.clear();
+        }
+      });
+      return;
+    }
+
+    _searchTimer = Timer(const Duration(milliseconds: 800), () {
+      _fetchAddressSuggestions(value, isPickup);
+    });
+  }
+
+  // Fetch address suggestions
+  Future<void> _fetchAddressSuggestions(String query, bool isPickup) async {
+    if (query.trim().length < 3) return;
+
+    setState(() => isSearchingAddress = true);
+
+    try {
+      final suggestions = await GeocodingService.searchAddresses(query);
+
+      setState(() {
+        if (isPickup) {
+          pickupSuggestions = suggestions;
+          showPickupSuggestions = suggestions.isNotEmpty;
+        } else {
+          dropoffSuggestions = suggestions;
+          showDropoffSuggestions = suggestions.isNotEmpty;
+        }
+        isSearchingAddress = false;
+      });
+    } catch (e) {
+      print('Error fetching suggestions: $e');
+      setState(() => isSearchingAddress = false);
+    }
+  }
+
+  // Select address suggestion
+  void _selectAddressSuggestion(AddressSuggestion suggestion, bool isPickup) {
+    setState(() {
+      if (isPickup) {
+        pickupLocation = suggestion.location;
+        pickupAddress = suggestion.address;
+        _pickupController.text = suggestion.address;
+        showPickupSuggestions = false;
+        tempPickupPin = suggestion.location;
+        pickupFocusNode.unfocus();
+      } else {
+        dropoffLocation = suggestion.location;
+        dropoffAddress = suggestion.address;
+        _dropoffController.text = suggestion.address;
+        showDropoffSuggestions = false;
+        tempDropoffPin = suggestion.location;
+        dropoffFocusNode.unfocus();
       }
     });
+
+    // Move camera to the selected location
+    if (mapController != null) {
+      mapController!.move(suggestion.location, 15.0);
+    }
+
+    // Create route if both locations are set
+    if (pickupLocation != null && dropoffLocation != null) {
+      _createRoute();
+      _estimateFare();
+    }
+
+    // Get nearby drivers if pickup location is set
+    if (isPickup) {
+      _getNearbyDrivers();
+    }
   }
 
   List<Marker> _buildMarkers() {
@@ -601,6 +638,96 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
       );
     }
 
+    // Temporary pickup pin (while searching)
+    if (tempPickupPin != null && pickupLocation != tempPickupPin) {
+      markers.add(
+        Marker(
+          width: 60,
+          height: 60,
+          point: tempPickupPin!,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.8),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: const Icon(
+                  Icons.push_pin,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'Preview',
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Temporary dropoff pin (while searching)
+    if (tempDropoffPin != null && dropoffLocation != tempDropoffPin) {
+      markers.add(
+        Marker(
+          width: 60,
+          height: 60,
+          point: tempDropoffPin!,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.8),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 2),
+                ),
+                child: const Icon(
+                  Icons.push_pin,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.8),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text(
+                  'Preview',
+                  style: TextStyle(
+                    fontSize: 8,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Nearby drivers markers
     for (var driver in nearbyDrivers) {
       if (driver['vehicle'] != null) {
@@ -676,6 +803,7 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
                 ),
                 TextField(
                   controller: controller,
+                  focusNode: isPickup ? pickupFocusNode : dropoffFocusNode,
                   decoration: InputDecoration(
                     hintText: isPickup
                         ? 'Enter pickup location'
@@ -700,6 +828,16 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
                     color: Colors.black,
                   ),
                   onChanged: (value) => _onAddressChanged(value, isPickup),
+                  onTap: () {
+                    // Clear suggestions when tapping to edit
+                    setState(() {
+                      if (isPickup) {
+                        showPickupSuggestions = false;
+                      } else {
+                        showDropoffSuggestions = false;
+                      }
+                    });
+                  },
                   textInputAction: TextInputAction.search,
                 ),
               ],
@@ -867,6 +1005,54 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  // Build suggestions list
+  Widget _buildSuggestionsList(
+    List<AddressSuggestion> suggestions,
+    bool isPickup,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(top: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: ListView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: suggestions.length,
+        itemBuilder: (context, index) {
+          final suggestion = suggestions[index];
+          return ListTile(
+            dense: true,
+            leading: Icon(
+              Icons.location_on,
+              color: isPickup ? Colors.green : Colors.red,
+              size: 20,
+            ),
+            title: Text(
+              suggestion.address,
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+            subtitle: suggestion.type != 'unknown'
+                ? Text(
+                    suggestion.type,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                  )
+                : null,
+            onTap: () => _selectAddressSuggestion(suggestion, isPickup),
+          );
+        },
       ),
     );
   }
@@ -1049,7 +1235,13 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
                         onTap: () => setState(() => isSelectingPickup = true),
                         controller: _pickupController,
                       ),
+
+                      // Pickup suggestions
+                      if (showPickupSuggestions && pickupSuggestions.isNotEmpty)
+                        _buildSuggestionsList(pickupSuggestions, true),
+
                       const SizedBox(height: 12),
+
                       _buildLocationInput(
                         title: 'Drop-off Location',
                         address: dropoffAddress,
@@ -1058,6 +1250,11 @@ class _EnhancedBookingScreenState extends State<EnhancedBookingScreen> {
                         onTap: () => setState(() => isSelectingDropoff = true),
                         controller: _dropoffController,
                       ),
+
+                      // Dropoff suggestions
+                      if (showDropoffSuggestions &&
+                          dropoffSuggestions.isNotEmpty)
+                        _buildSuggestionsList(dropoffSuggestions, false),
 
                       const SizedBox(height: 16),
 
